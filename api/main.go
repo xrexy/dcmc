@@ -12,7 +12,9 @@ import (
 )
 
 func scaffoldFiberServer(lc fx.Lifecycle, pluginsHandler *handlers.PluginsHandler) *fiber.App {
-	app := fiber.New(fiber.Config{})
+	app := fiber.New(fiber.Config{
+		BodyLimit: 50 * 1024 * 1024, // 50 MB
+	})
 
 	app.Use(cors.New())
 	app.Use(logger.New())

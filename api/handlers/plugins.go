@@ -46,9 +46,23 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 		}
 	}
 
-	go parser.ParsePluginFile(plugin, dependencies)
+	parsed, yml, err := parser.ParsePluginFile(plugin, dependencies)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	warnings := make([]string, 0)
+
+	if len(yml.HardDependencies)+len(yml.SoftDependencies) > len(dependencies) {
+		warnings = append(warnings, fmt.Sprintf("Plugin has %d dependencies, but only %d were provided", len(yml.HardDependencies)+len(yml.SoftDependencies), len(dependencies)))
+	}
 
 	return c.JSON(fiber.Map{
-		"status": "OK",
+		"plugin":      parsed,
+		"partialYaml": yml,
+		"warnings":    warnings,
 	})
+
 }
