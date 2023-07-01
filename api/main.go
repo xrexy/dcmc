@@ -24,7 +24,7 @@ func scaffoldFiberServer(lc fx.Lifecycle, pluginsHandler *handlers.PluginsHandle
 	})
 
 	pluginsGroup := app.Group("/plugins")
-	pluginsGroup.Get("/", pluginsHandler.FetchPlugins)
+	pluginsGroup.Get("/container", pluginsHandler.CreateContainer)
 
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
