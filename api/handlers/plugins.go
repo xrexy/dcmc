@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
+	"github.com/xrexy/dmc/docker"
 	"github.com/xrexy/dmc/parser"
+	"github.com/xrexy/dmc/utils"
 )
 
 type PluginsHandler struct {
@@ -30,13 +34,10 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 		})
 	}
 
-	plugin := form.File["plugin"][0]
-	fmt.Println(plugin.Filename)
-
 	var dependencies []*multipart.FileHeader
 	for formFieldName, fileHeaders := range form.File {
 		for _, file := range fileHeaders {
-			if formFieldName == "plugin" {
+			if formFieldName == "plugin" || formFieldName != "dependency" {
 				continue
 			}
 
@@ -46,23 +47,67 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 		}
 	}
 
-	parsed, yml, err := parser.ParsePluginFile(plugin, dependencies)
+	fmt.Println("Dependencies: ", dependencies)
+
+	plugins := make([]*parser.Plugin, 0)
+
+	var wg sync.WaitGroup
+
+	plugin, err := parser.ParsePlugin(form.File["plugin"][0], true)
 	if err != nil {
+		fmt.Println("Error parsing plugin", err)
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
-			"error": err.Error(),
+			"error": "Error parsing plugin. Check if the plugin.yml is valid",
 		})
 	}
 
-	warnings := make([]string, 0)
+	requiredDeps := plugin.Dependencies // required takes into account all plugins's "depend"s
+	softDeps := plugin.SoftDependencies //  softDeps takes only the main plugin's "softdepend"s
 
-	if len(yml.HardDependencies)+len(yml.SoftDependencies) > len(dependencies) {
-		warnings = append(warnings, fmt.Sprintf("Plugin has %d dependencies, but only %d were provided", len(yml.HardDependencies)+len(yml.SoftDependencies), len(dependencies)))
+	plugins = append(plugins, plugin)
+
+	for _, dep := range dependencies {
+		wg.Add(1)
+
+		go func(dep *multipart.FileHeader) {
+			defer wg.Done()
+
+			plugin, err := parser.ParsePlugin(dep, false)
+			if err != nil {
+				fmt.Println("Error parsing plugin", err)
+				return
+			}
+
+			if plugin.File == nil {
+				fmt.Println("Error parsing plugin. Has no File associated with it", err)
+				return
+			}
+
+			// Check if the plugin is required by the main plugin
+			if utils.ContainsString(requiredDeps, plugin.Name) || utils.ContainsString(softDeps, plugin.Name) {
+				plugins = append(plugins, plugin)
+				if plugin.Dependencies != nil {
+					requiredDeps = append(requiredDeps, plugin.Dependencies...)
+				}
+
+				return
+			}
+		}(dep)
 	}
 
-	return c.JSON(fiber.Map{
-		"plugin":      parsed,
-		"partialYaml": yml,
-		"warnings":    warnings,
-	})
+	wg.Wait()
 
+	uuid := uuid.New().String()
+
+	docker.StartContainer(plugins, uuid)
+
+	return c.JSON(fiber.Map{
+		"status":  "OK",
+		"plugins": plugins,
+		"uuid":    uuid,
+		"dependencies": fiber.Map{
+			"required": requiredDeps,
+			"soft":     softDeps,
+		},
+	})
 }

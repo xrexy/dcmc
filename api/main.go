@@ -51,6 +51,7 @@ func main() {
 	fx.New(
 		fx.Provide(
 			handlers.NewPluginsHandler,
+			// docker.NewDocker,
 		),
 		fx.Invoke(
 			scaffoldFiberServer,
