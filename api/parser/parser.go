@@ -13,11 +13,11 @@ type Plugin struct {
 	Version          string         `yaml:"version" json:"version"`
 	Dependencies     []string       `yaml:"depend" json:"depend"`
 	SoftDependencies []string       `yaml:"softdepend" json:"softdepend"`
-	IsMain           bool           `yaml:"-" json:"isMain"`
 	File             multipart.File `yaml:"-" json:"-"`
+	// IsMain           bool           `yaml:"-" json:"isMain"`
 }
 
-func ParsePlugin(file *multipart.FileHeader, isMain bool) (*Plugin, error) {
+func ParsePlugin(file *multipart.FileHeader) (*Plugin, error) {
 	zipReader, err := toZipReader(file)
 	if err != nil {
 		return nil, err
@@ -43,7 +43,15 @@ func ParsePlugin(file *multipart.FileHeader, isMain bool) (*Plugin, error) {
 	}
 
 	plugin.File = multiFile
-	plugin.IsMain = isMain
+	// plugin.IsMain = isMain
+
+	if plugin.Dependencies == nil {
+		plugin.Dependencies = make([]string, 0)
+	}
+
+	if plugin.SoftDependencies == nil {
+		plugin.SoftDependencies = make([]string, 0)
+	}
 
 	return plugin, nil
 }

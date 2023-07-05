@@ -53,7 +53,7 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 
 	var wg sync.WaitGroup
 
-	plugin, err := parser.ParsePlugin(form.File["plugin"][0], true)
+	plugin, err := parser.ParsePlugin(form.File["plugin"][0])
 	if err != nil {
 		fmt.Println("Error parsing plugin", err)
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
@@ -64,6 +64,13 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 	requiredDeps := plugin.Dependencies // required takes into account all plugins's "depend"s
 	softDeps := plugin.SoftDependencies //  softDeps takes only the main plugin's "softdepend"s
 
+	if len(requiredDeps) > len(dependencies) {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error":    fmt.Sprintf("Missing dependencies. Required: %v, has %v", len(requiredDeps), len(dependencies)),
+			"required": requiredDeps,
+		})
+	}
+
 	plugins = append(plugins, plugin)
 
 	for _, dep := range dependencies {
@@ -72,7 +79,7 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 		go func(dep *multipart.FileHeader) {
 			defer wg.Done()
 
-			plugin, err := parser.ParsePlugin(dep, false)
+			plugin, err := parser.ParsePlugin(dep)
 			if err != nil {
 				fmt.Println("Error parsing plugin", err)
 				return
@@ -83,19 +90,47 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 				return
 			}
 
-			// Check if the plugin is required by the main plugin
 			if utils.ContainsString(requiredDeps, plugin.Name) || utils.ContainsString(softDeps, plugin.Name) {
 				plugins = append(plugins, plugin)
-				if plugin.Dependencies != nil {
-					requiredDeps = append(requiredDeps, plugin.Dependencies...)
-				}
-
+			} else {
 				return
 			}
+
+			if plugin.Dependencies != nil {
+				requiredDeps = append(requiredDeps, plugin.Dependencies...)
+			}
+
 		}(dep)
 	}
 
 	wg.Wait()
+
+	// Make sure required dependencies are satisfied
+	if len(requiredDeps) > len(plugins) {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error":    fmt.Sprintf("Too little dependencies. Required: %v, has %v", len(requiredDeps), len(plugins)),
+			"required": requiredDeps,
+		})
+	}
+
+	// Make sure all required dependencies match the ones in the plugins slice
+	found := 0
+	for _, dep := range requiredDeps {
+		for _, plugin := range plugins {
+			fmt.Println("Plugin name: ", plugin.Name, "Dep: ", dep)
+			if plugin.Name == dep {
+				found++
+				break
+			}
+		}
+	}
+
+	if found != len(requiredDeps) {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error":    fmt.Sprintf("Missing required dependencies. Required: %v, has %v", len(requiredDeps), found),
+			"required": requiredDeps,
+		})
+	}
 
 	uuid := uuid.New().String()
 
@@ -108,12 +143,13 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"status":  "OK",
-		"plugins": plugins,
-		"uuid":    uuid,
-		"dependencies": fiber.Map{
-			"required": requiredDeps,
-			"soft":     softDeps,
+		"uuid": uuid,
+		"data": fiber.Map{
+			"plugins": plugins,
+			"dependencies": fiber.Map{
+				"required": requiredDeps,
+				"soft":     softDeps,
+			},
 		},
 	})
 }
