@@ -99,7 +99,13 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 
 	uuid := uuid.New().String()
 
-	docker.StartContainer(plugins, uuid)
+	err = docker.StartContainer(plugins, uuid)
+	if err != nil {
+		fmt.Println("Error starting container", err)
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error starting container",
+		})
+	}
 
 	return c.JSON(fiber.Map{
 		"status":  "OK",

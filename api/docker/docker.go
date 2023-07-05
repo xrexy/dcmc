@@ -3,13 +3,16 @@ package docker
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	natting "github.com/docker/go-connections/nat"
 	"github.com/xrexy/dmc/parser"
 	"github.com/xrexy/dmc/utils"
 )
@@ -29,8 +32,8 @@ import (
 // 	}
 // }
 
-func StartContainer(plugins []*parser.Plugin, uuid string) {
-	dirName := fmt.Sprintf("storage/%s/plugins", uuid)
+func StartContainer(plugins []*parser.Plugin, uuid string) error {
+	dirName := fmt.Sprintf("docker/storage/%s/plugins", uuid)
 
 	// create folders
 	if err := os.MkdirAll(dirName, os.ModePerm); err != nil {
@@ -46,8 +49,9 @@ func StartContainer(plugins []*parser.Plugin, uuid string) {
 			defer wg.Done()
 
 			if err := utils.SaveFile(fmt.Sprintf("%s-%s.jar", plugin.Name, plugin.Version), plugin.File, dirName); err != nil {
-				panic(err)
+				return
 			}
+			fmt.Println("Saved file", plugin.Name, plugin.Version)
 		}(plugin)
 	}
 
@@ -56,40 +60,15 @@ func StartContainer(plugins []*parser.Plugin, uuid string) {
 	// start container
 	fmt.Println("Starting container")
 
-	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv)
+	// TODO don't create a new client every time
+	cli, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	imageName := "itzg/minecraft-server:latest"
-	containerName := fmt.Sprintf("dmc-%s", uuid)
+	defer cli.Close()
 
-	_, err = cli.ContainerCreate(ctx, &container.Config{
-		Image: imageName,
-		Volumes: map[string]struct{}{
-			"/data": {},
-		},
-	}, &container.HostConfig{
-		PortBindings: nat.PortMap{
-			"25565/tcp": []nat.PortBinding{
-				{
-					HostIP:   " ",
-					HostPort: "25565",
-				},
-			},
-		},
-	}, nil, nil, containerName)
-
-	if err != nil {
-		panic(err)
-	}
-
-	if err := cli.ContainerStart(ctx, containerName, types.ContainerStartOptions{}); err != nil {
-		panic(err)
-	}
-
-	fmt.Println("Container started")
+	return runContainer(cli, uuid, "25565")
 }
 
 func StopContainer(uuid string) {
@@ -98,4 +77,109 @@ func StopContainer(uuid string) {
 	if err := os.RemoveAll(dirName); err != nil {
 		panic(err)
 	}
+}
+
+func runContainer(client *client.Client, uuid string, port string) error {
+	// Define a PORT opening
+	newport, err := natting.NewPort("tcp", port)
+	if err != nil {
+		fmt.Println("Unable to create docker port")
+		return err
+	}
+
+	pwd, err := os.Getwd()
+	if err != nil {
+		fmt.Println("Unable to get working directory")
+		return err
+	}
+
+	fmt.Println(uuid)
+
+	files, err := os.ReadDir(fmt.Sprintf("%s/docker/storage/%s", pwd, uuid))
+	if err != nil {
+		fmt.Println("Unable to read directory")
+		return err
+	}
+
+	for _, file := range files {
+		fmt.Println(file.Name())
+	}
+
+	// Configured hostConfig:
+	// https://godoc.org/github.com/docker/docker/api/types/container#HostConfig
+	hostConfig := &container.HostConfig{
+		PortBindings: natting.PortMap{
+			newport: []natting.PortBinding{
+				{
+					HostIP:   "0.0.0.0",
+					HostPort: port,
+				},
+			},
+		},
+		RestartPolicy: container.RestartPolicy{
+			Name: "always",
+		},
+		LogConfig: container.LogConfig{
+			Type:   "json-file",
+			Config: map[string]string{},
+		},
+		Mounts: []mount.Mount{
+			{
+				Type: mount.TypeBind,
+				// Source: fmt.Sprintf("storage/%s", uuid),
+				// absolute path, using pwd
+				Source: fmt.Sprintf("%s/docker/storage/%s", pwd, uuid),
+
+				Target: "/data",
+			},
+		},
+	}
+
+	// Define Network config (why isn't PORT in here...?:
+	// https://godoc.org/github.com/docker/docker/api/types/network#NetworkingConfig
+	networkConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{},
+	}
+	gatewayConfig := &network.EndpointSettings{
+		Gateway: "gatewayname",
+	}
+	networkConfig.EndpointsConfig["bridge"] = gatewayConfig
+
+	// Define ports to be exposed (has to be same as hostconfig.portbindings.newport)
+	exposedPorts := map[natting.Port]struct{}{
+		newport: {},
+	}
+
+	// Configuration
+	// https://godoc.org/github.com/docker/docker/api/types/container#Config
+	config := &container.Config{
+		Image:        "itzg/minecraft-server:java11-jdk",
+		ExposedPorts: exposedPorts,
+		Env: []string{
+			"EULA=TRUE",
+			"TYPE=SPIGOT",
+			"VERSION=1.16.4",
+			"MODE=CREATIVE",
+		},
+	}
+
+	// Creating the actual container. This is "nil,nil,nil" in every example.
+	cont, err := client.ContainerCreate(
+		context.Background(),
+		config,
+		hostConfig,
+		networkConfig, nil,
+		fmt.Sprintf("dmc-%s", uuid),
+	)
+
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	// Run the actual container
+	client.ContainerStart(context.Background(), cont.ID, types.ContainerStartOptions{})
+	log.Printf("Container %s is created", cont.ID)
+
+	return nil
 }
