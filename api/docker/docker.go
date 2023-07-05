@@ -71,14 +71,6 @@ func StartContainer(plugins []*parser.Plugin, uuid string) error {
 	return runContainer(cli, uuid, "25565")
 }
 
-func StopContainer(uuid string) {
-	dirName := fmt.Sprintf("storage/%s", uuid)
-
-	if err := os.RemoveAll(dirName); err != nil {
-		panic(err)
-	}
-}
-
 func runContainer(client *client.Client, uuid string, port string) error {
 	// Define a PORT opening
 	newport, err := natting.NewPort("tcp", port)
@@ -181,5 +173,45 @@ func runContainer(client *client.Client, uuid string, port string) error {
 	client.ContainerStart(context.Background(), cont.ID, types.ContainerStartOptions{})
 	log.Printf("Container %s is created", cont.ID)
 
+	return nil
+}
+
+func StopContainer(uuid string) error {
+	dirName := fmt.Sprintf("docker/storage/%s", uuid)
+
+	// check if folder exists
+	if _, err := os.Stat(dirName); os.IsNotExist(err) {
+		return fmt.Errorf("we don't have a container with that uuid")
+	}
+
+	// remove folder
+	if err := os.RemoveAll(dirName); err != nil {
+		return fmt.Errorf("unable to remove folder")
+	}
+
+	// disabled docker client
+	cli, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("unable to create docker client")
+	}
+
+	defer cli.Close()
+
+	// check if container exists
+	_, err = cli.ContainerInspect(context.Background(), fmt.Sprintf("dmc-%s", uuid))
+	if err != nil {
+		return fmt.Errorf("no container with that uuid exists")
+	}
+
+	err = cli.ContainerRemove(context.Background(), fmt.Sprintf("dmc-%s", uuid), types.ContainerRemoveOptions{
+		Force:         true,
+		RemoveVolumes: true,
+	})
+
+	if err != nil {
+		return fmt.Errorf("unable to remove container")
+	}
+
+	// remove folder
 	return nil
 }

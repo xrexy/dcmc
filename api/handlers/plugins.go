@@ -117,3 +117,36 @@ func (h *PluginsHandler) CreateContainer(c *fiber.Ctx) error {
 		},
 	})
 }
+
+type StopContainerRequest struct {
+	UUID string `json:"uuid"`
+}
+
+func (h *PluginsHandler) StopContainer(c *fiber.Ctx) error {
+	var req StopContainerRequest
+	err := c.BodyParser(&req)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid body",
+		})
+	}
+
+	if req.UUID == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "Missing 'uuid' field",
+		})
+	}
+
+	err = docker.StopContainer(req.UUID)
+	if err != nil {
+		fmt.Println("Error stopping container", err)
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.Status(http.StatusOK).JSON(fiber.Map{
+		"status": "OK",
+		"uuid":   req.UUID,
+	})
+}
