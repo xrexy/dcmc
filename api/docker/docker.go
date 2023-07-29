@@ -17,22 +17,46 @@ import (
 	"github.com/xrexy/dmc/utils"
 )
 
-// type Docker struct {
-// 	client *client.Client
-// }
+type Gamemode string
+type Version string
 
-// func NewDocker() *Docker {
-// 	cli, err := client.NewClientWithOpts(client.FromEnv)
-// 	if err != nil {
-// 		panic(err)
-// 	}
+const (
+	CREATIVE  Gamemode = "CREATIVE"
+	SURVIVAL  Gamemode = "SURVIVAL"
+	SPECTATOR Gamemode = "SPECTATOR"
+	ADVENTURE Gamemode = "ADVENTURE"
+)
 
-// 	return &Docker{
-// 		client: cli,
-// 	}
-// }
+func makeEnv(version string, gamemode Gamemode, spigetResources []uint32) []string {
+	return []string{
+		"EULA=TRUE",
+		"TYPE=SPIGOT",
+		fmt.Sprintf("VERSION=%s", version),
+		fmt.Sprintf("MODE=%s", gamemode),
+		// fmt.Sprintf("SPIGET_RESOURCES=%s", strings.Trim(strings.Replace(fmt.Sprint(spigetResources), " ", ",", -1), "[]")),
+	}
+}
 
-func StartContainer(plugins []*parser.Plugin, uuid string) error {
+func StartSpigetContainer(uuid string, pluginIds []uint32) error {
+	// TODO don't create a new client every time
+	cli, err := client.NewClientWithOpts(client.WithAPIVersionNegotiation())
+	if err != nil {
+		return err
+	}
+
+	defer cli.Close()
+
+	// create the folder
+	dirName := fmt.Sprintf("docker/storage/%s/plugins", uuid)
+	if err := os.MkdirAll(dirName, os.ModePerm); err != nil {
+		return fmt.Errorf("unable to create container folder")
+	}
+
+	env := makeEnv("1.20.1", CREATIVE, pluginIds)
+	return runContainer(cli, uuid, "25565", env)
+}
+
+func StartContainer(uuid string, plugins []*parser.Plugin) error {
 	dirName := fmt.Sprintf("docker/storage/%s/plugins", uuid)
 
 	// create folders
@@ -68,10 +92,10 @@ func StartContainer(plugins []*parser.Plugin, uuid string) error {
 
 	defer cli.Close()
 
-	return runContainer(cli, uuid, "25565")
+	return runContainer(cli, uuid, "25565", makeEnv("1.20.1", CREATIVE, []uint32{}))
 }
 
-func runContainer(client *client.Client, uuid string, port string) error {
+func runContainer(client *client.Client, uuid string, port string, env []string) error {
 	// Define a PORT opening
 	newport, err := natting.NewPort("tcp", port)
 	if err != nil {
@@ -145,14 +169,10 @@ func runContainer(client *client.Client, uuid string, port string) error {
 	// Configuration
 	// https://godoc.org/github.com/docker/docker/api/types/container#Config
 	config := &container.Config{
-		Image:        "itzg/minecraft-server:java11-jdk",
+		// Image:        "itzg/minecraft-server:java11-jdk",
+		Image:        "itzg/minecraft-server:java17",
 		ExposedPorts: exposedPorts,
-		Env: []string{
-			"EULA=TRUE",
-			"TYPE=SPIGOT",
-			"VERSION=1.16.4",
-			"MODE=CREATIVE",
-		},
+		Env:          env,
 	}
 
 	// Creating the actual container. This is "nil,nil,nil" in every example.

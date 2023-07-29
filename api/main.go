@@ -19,16 +19,18 @@ func scaffoldFiberServer(lc fx.Lifecycle, pluginsHandler *handlers.PluginsHandle
 	app.Use(cors.New())
 	app.Use(logger.New())
 
-	app.Get("/health", func(c *fiber.Ctx) error {
+	apiGroup := app.Group("/api")
+
+	apiGroup.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status": "OK",
 		})
 	})
 
-	pluginsGroup := app.Group("/plugins")
-	pluginsGroup.Get("/container/new", pluginsHandler.CreateContainer)
+	pluginsGroup := apiGroup.Group("/container")
+	pluginsGroup.Get("/new", pluginsHandler.CreateContainer)
 	// stop
-	pluginsGroup.Post("/container/stop", pluginsHandler.StopContainer)
+	pluginsGroup.Post("/stop", pluginsHandler.StopContainer)
 
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
